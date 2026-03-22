@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -16,7 +17,7 @@ const REDIRECT_URI = process.env.REDIRECT_URI;
 const DEFAULT_GUILD_ID = process.env.DEFAULT_GUILD_ID || "GLOBAL";
 
 // Redirect to Discord OAuth
-app.get("/", async (req, res) => {
+app.get("/", (req, res) => {
   const state = req.query.state || DEFAULT_GUILD_ID;
   const authURL =
     "https://discord.com/oauth2/authorize?" +
@@ -25,7 +26,7 @@ app.get("/", async (req, res) => {
       redirect_uri: REDIRECT_URI,
       response_type: "code",
       scope: "identify",
-      state
+      state,
     }).toString();
   res.redirect(authURL);
 });
@@ -34,11 +35,10 @@ app.get("/", async (req, res) => {
 app.get("/callback", async (req, res) => {
   const code = req.query.code;
   const guild_id = req.query.state || DEFAULT_GUILD_ID;
-
   if (!code) return res.status(400).send("Missing code");
 
   try {
-    // Exchange code for Discord token
+    // Exchange code for token
     const tokenRes = await fetch("https://discord.com/api/v10/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -47,38 +47,23 @@ app.get("/callback", async (req, res) => {
         client_secret: CLIENT_SECRET,
         grant_type: "authorization_code",
         code,
-        redirect_uri: REDIRECT_URI
-      })
+        redirect_uri: REDIRECT_URI,
+      }),
     });
-
-    let tokens;
-    try {
-      tokens = await tokenRes.json();
-    } catch (e) {
-      console.error("Failed to parse token response:", await tokenRes.text());
-      return res.status(500).send("Discord token exchange failed");
-    }
-
+    const tokens = await tokenRes.json();
     if (!tokens.access_token) throw new Error("Token exchange failed");
 
-    // Fetch Discord user profile
+    // Fetch Discord user
     const userRes = await fetch("https://discord.com/api/v10/users/@me", {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
     const user = await userRes.json();
     if (!user.id) throw new Error("Failed to fetch user profile");
 
-    // Get user IP for geolocation
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    const ipRes = await fetch(`https://ipapi.co/${ip}/json/`);
-    let ipData = {};
-    try {
-      ipData = await ipRes.json();
-    } catch (e) {
-      console.warn("Failed to get geolocation:", e);
-    }
+    // Geolocation (country, region, ISP)
+    const ipRes = await fetch(`https://ipapi.co/${req.ip}/json/`);
+    const ipData = await ipRes.json();
 
-    // Store user info in Supabase
     const payload = {
       discord_id: user.id,
       guild_id,
@@ -88,12 +73,15 @@ app.get("/callback", async (req, res) => {
       locale: user.locale || null,
       verified: true,
       country: ipData.country_name || null,
-      country_flag: ipData.country_code
-        ? `https://flagcdn.com/64x48/${ipData.country_code.toLowerCase()}.png`
+      country_flag: ipData.country
+        ? `https://flagcdn.com/64x48/${ipData.country.toLowerCase()}.png`
         : null,
       region: ipData.region || null,
       isp: ipData.org || null,
-      updated_at: new Date().toISOString()
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { error } = await supabase
