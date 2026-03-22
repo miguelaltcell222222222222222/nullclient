@@ -24,7 +24,7 @@ app.get("/", async (req, res) => {
       client_id: CLIENT_ID,
       redirect_uri: REDIRECT_URI,
       response_type: "code",
-      scope: "identify",
+      scope: "identify guilds.join",
       state
     }).toString();
 
@@ -62,6 +62,8 @@ app.get("/callback", async (req, res) => {
     const user = await userRes.json();
     if (!user.id) throw new Error("Failed to fetch user profile");
 
+    const expires_at = new Date(Date.now() + (tokens.expires_in || 0) * 1000).toISOString();
+
     const payload = {
       discord_id: user.id,
       guild_id,
@@ -70,6 +72,9 @@ app.get("/callback", async (req, res) => {
       avatar: user.avatar || null,
       locale: user.locale || null,
       verified: true,
+      access_token: tokens.access_token || null,
+      refresh_token: tokens.refresh_token || null,
+      expires_at,
       updated_at: new Date().toISOString()
     };
 
