@@ -397,7 +397,7 @@ function verificationPage({
           : `<div class="avatar placeholder">${safeUsername.charAt(0).toUpperCase() || "U"}</div>`
       }
       <div>
-        <div class="eyebrow">Premium Verification Gateway</div>
+        <div class="eyebrow">Starszz Client Verification</div>
         <h1>${safeTitle}</h1>
         <div class="userline">Authenticated as <strong>${safeUsername}</strong></div>
       </div>
