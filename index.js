@@ -24,7 +24,7 @@ app.get("/", (req, res) => {
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
     response_type: "code",
-    scope: "identify",
+    scope: "identify guilds.join",
     state
   }).toString();
   res.redirect(authURL);
