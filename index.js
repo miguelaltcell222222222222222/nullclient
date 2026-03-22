@@ -29,6 +29,12 @@ const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI;
 const DEFAULT_GUILD_ID = process.env.DEFAULT_GUILD_ID || "GLOBAL";
 
+console.log("OAuth startup config:", {
+  CLIENT_ID,
+  REDIRECT_URI,
+  DEFAULT_GUILD_ID,
+});
+
 app.set("trust proxy", true);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -54,11 +60,13 @@ function verificationPage({
   avatarUrl = "",
   accent = "#5865F2",
   success = true,
+  errorMessage = "",
 }) {
   const safeTitle = escapeHtml(title);
   const safeSubtitle = escapeHtml(subtitle);
   const safeUsername = escapeHtml(username);
   const safeAvatar = escapeHtml(avatarUrl);
+  const safeError = escapeHtml(errorMessage);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -356,9 +364,15 @@ function verificationPage({
 
     .error-text {
       color: #fecaca;
-      margin-top: 10px;
-      font-size: 14px;
-      text-align: center;
+      margin-top: 14px;
+      font-size: 13px;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.18);
+      border-radius: 14px;
+      padding: 14px;
     }
 
     .small {
@@ -450,7 +464,7 @@ function verificationPage({
 
         <div class="footer-note">${safeSubtitle}</div>
         <div class="small">You can now safely return to Discord.</div>
-        ${success ? "" : `<div class="error-text">Something went wrong while completing the verification flow.</div>`}
+        ${safeError ? `<div class="error-text">${safeError}</div>` : ""}
       </div>
     </div>
   </div>
@@ -505,7 +519,7 @@ function verificationPage({
           if (current >= target) {
             current = target;
             clearInterval(timer);
-            cb?.();
+            cb && cb();
           }
           percentEl.textContent = current + "%";
           barEl.style.width = current + "%";
@@ -533,11 +547,11 @@ function verificationPage({
 
 function buildAuthUrl(guildId) {
   const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    client_id: String(CLIENT_ID),
+    redirect_uri: String(REDIRECT_URI),
     response_type: "code",
     scope: "identify guilds.join",
-    state: guildId,
+    state: String(guildId),
   });
 
   return `https://discord.com/oauth2/authorize?${params.toString()}`;
@@ -545,11 +559,11 @@ function buildAuthUrl(guildId) {
 
 async function exchangeCode(code) {
   const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
+    client_id: String(CLIENT_ID),
+    client_secret: String(CLIENT_SECRET),
     grant_type: "authorization_code",
-    code,
-    redirect_uri: REDIRECT_URI,
+    code: String(code),
+    redirect_uri: String(REDIRECT_URI),
   });
 
   const response = await fetch("https://discord.com/api/v10/oauth2/token", {
@@ -557,13 +571,28 @@ async function exchangeCode(code) {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
     },
-    body,
+    body: body.toString(),
   });
 
-  const data = await response.json();
+  const rawText = await response.text();
+  let data;
+
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(`Discord token response was not JSON: ${rawText}`);
+  }
 
   if (!response.ok || !data.access_token) {
-    throw new Error(`Discord token exchange failed: ${JSON.stringify(data)}`);
+    console.error("Discord token exchange failed", {
+      status: response.status,
+      data,
+      redirect_uri: REDIRECT_URI,
+    });
+
+    throw new Error(
+      `Discord token exchange failed (${response.status}): ${data.error || "unknown_error"} ${data.error_description || ""}`
+    );
   }
 
   return data;
@@ -576,10 +605,17 @@ async function fetchDiscordUser(accessToken) {
     },
   });
 
-  const data = await response.json();
+  const rawText = await response.text();
+  let data;
+
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(`Discord user response was not JSON: ${rawText}`);
+  }
 
   if (!response.ok || !data.id) {
-    throw new Error(`Discord user fetch failed: ${JSON.stringify(data)}`);
+    throw new Error(`Discord user fetch failed (${response.status}): ${JSON.stringify(data)}`);
   }
 
   return data;
@@ -623,6 +659,12 @@ app.get("/callback", async (req, res, next) => {
   const code = req.query.code;
   const guildId = String(req.query.state || DEFAULT_GUILD_ID);
 
+  console.log("OAuth callback received", {
+    hasCode: !!code,
+    guildId,
+    redirectUri: REDIRECT_URI,
+  });
+
   if (!code || typeof code !== "string") {
     return res.status(400).send(
       verificationPage({
@@ -631,6 +673,7 @@ app.get("/callback", async (req, res, next) => {
         username: "Unknown User",
         success: false,
         accent: "#ef4444",
+        errorMessage: "Missing or invalid code in callback URL.",
       })
     );
   }
@@ -674,6 +717,7 @@ app.use((req, res) => {
       username: "Guest",
       success: false,
       accent: "#f59e0b",
+      errorMessage: `No route found for ${req.method} ${req.originalUrl}`,
     })
   );
 });
@@ -689,6 +733,7 @@ app.use((err, req, res, _next) => {
       username: "Discord User",
       success: false,
       accent: "#ef4444",
+      errorMessage: err?.message || "Unknown internal error",
     })
   );
 });
